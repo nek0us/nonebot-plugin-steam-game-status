@@ -124,6 +124,7 @@ _✨ 在群内播报 Steam 游戏状态的 Nonebot 插件 ✨_
 
 | 配置项 | 必填 | 默认值 | 类型 | 说明 |
 |:-----:|:----:|:----:|:----:|:----:|
+| steam_card_watermark | 否 | false | bool | 是否显示状态卡片上的 Steam 装饰文字水印，适用于静态和动态卡片 |
 | steam_dynamic_avatar_card | 否 | false | bool | 尝试使用 Steam 动态头像资源生成动态 GIF 卡片。默认关闭 |
 | steam_dynamic_card_cache | 否 | true | bool | 动态 GIF 卡片缓存开关 |
 | steam_dynamic_card_preserve_avatar_gif_timing | 否 | true | bool | 生成动态卡片时尽量保留原头像 GIF 的帧数和播放速度 |

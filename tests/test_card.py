@@ -343,6 +343,7 @@ class TestSteamBackgroundResolution(unittest.IsolatedAsyncioTestCase):
 
     async def test_concurrent_requests_are_deduplicated(self):
         url = "https://example.com/hero.jpg"
+
         async def delayed_fetch(appid):
             await asyncio.sleep(0.01)
             return url
@@ -363,6 +364,143 @@ class TestSteamBackgroundResolution(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await card.resolve_steam_game_background_url("123"), url)
             self.assertEqual(await card.resolve_steam_game_background_url("123"), url)
             self.assertEqual(fetch.await_count, 2)
+
+
+class TestCardWatermark(unittest.IsolatedAsyncioTestCase):
+    async def _run_with_stubs(self, modules, operation):
+        package = types.ModuleType("nonebot_plugin_steam_game_status")
+        package.__path__ = []
+        modules["nonebot_plugin_steam_game_status"] = package
+        with (
+            patch.object(card, "__package__", "nonebot_plugin_steam_game_status"),
+            patch.object(
+                card,
+                "__spec__",
+                importlib.machinery.ModuleSpec("nonebot_plugin_steam_game_status.card", loader=None),
+            ),
+            patch.dict(sys.modules, modules),
+        ):
+            return await operation()
+
+    @staticmethod
+    def _logger_module():
+        logger = types.SimpleNamespace(
+            warning=lambda *args, **kwargs: None,
+            debug=lambda *args, **kwargs: None,
+            error=lambda *args, **kwargs: None,
+        )
+        module = types.ModuleType("nonebot.log")
+        module.logger = logger
+        return module
+
+    async def test_static_renderer_toggles_watermark_class(self):
+        captured_classes = []
+        config = types.ModuleType("nonebot_plugin_steam_game_status.config")
+        config.config_steam = types.SimpleNamespace(steam_card_watermark=False)
+
+        cache = types.ModuleType("nonebot_plugin_steam_game_status.cache")
+
+        async def get_cached_image_url(url, **kwargs):
+            return url
+
+        cache.get_cached_image_url = get_cached_image_url
+        htmlrender = types.ModuleType("nonebot_plugin_htmlrender")
+
+        async def template_to_pic(**kwargs):
+            captured_classes.append(kwargs["templates"]["card_class"])
+            return b"png"
+
+        htmlrender.template_to_pic = template_to_pic
+        modules = {
+            "nonebot": types.ModuleType("nonebot"),
+            "nonebot.log": self._logger_module(),
+            "nonebot_plugin_htmlrender": htmlrender,
+            "nonebot_plugin_steam_game_status.config": config,
+            "nonebot_plugin_steam_game_status.cache": cache,
+        }
+
+        async def render_both():
+            await card.render_steam_card("avatar", "player", "game", "playing")
+            config.config_steam.steam_card_watermark = True
+            await card.render_steam_card("avatar", "player", "game", "playing")
+
+        await self._run_with_stubs(modules, render_both)
+        self.assertNotIn("show-watermark", captured_classes[0].split())
+        self.assertIn("show-watermark", captured_classes[1].split())
+        template = (Path(card.__file__).parent / "templates" / "steam_card.html").read_text("utf8")
+        self.assertIn(".bg-watermark {\n            display: none;", template)
+
+    async def test_dynamic_cache_separates_watermark_setting(self):
+        cache_paths = []
+
+        class FakeCacheFile:
+            def __init__(self, path):
+                self.path = path
+
+            def exists(self):
+                return True
+
+            def touch(self):
+                pass
+
+            def read_bytes(self):
+                return b"cached-gif"
+
+        class FakeCacheDir:
+            def __truediv__(self, name):
+                cache_paths.append(name)
+                return FakeCacheFile(name)
+
+        class FakePlaywrightContext:
+            async def __aenter__(self):
+                raise AssertionError("cache hit must not start Playwright")
+
+            async def __aexit__(self, *args):
+                return None
+
+        config = types.ModuleType("nonebot_plugin_steam_game_status.config")
+        settings = types.SimpleNamespace(
+            steam_card_watermark=False,
+            steam_dynamic_avatar_card=True,
+            steam_dynamic_card_capture_duration_ms=100,
+            steam_dynamic_card_frame_count=2,
+            steam_dynamic_card_capture_interval_ms=40,
+            steam_dynamic_card_frame_duration_ms=50,
+            steam_dynamic_card_preserve_avatar_gif_timing=True,
+            steam_dynamic_card_max_avatar_frames=20,
+            steam_dynamic_card_cache=True,
+            steam_dynamic_card_timeout_ms=100,
+        )
+        config.config_steam = settings
+        source = types.ModuleType("nonebot_plugin_steam_game_status.source")
+        source.dynamic_card_cache_dir = FakeCacheDir()
+        utils = types.ModuleType("nonebot_plugin_steam_game_status.utils")
+        utils.playwright_context = FakePlaywrightContext
+        pil = types.ModuleType("PIL")
+        pil.Image = object()
+        modules = {
+            "nonebot": types.ModuleType("nonebot"),
+            "nonebot.log": self._logger_module(),
+            "PIL": pil,
+            "nonebot_plugin_steam_game_status.config": config,
+            "nonebot_plugin_steam_game_status.source": source,
+            "nonebot_plugin_steam_game_status.utils": utils,
+        }
+
+        async def render_both():
+            await card.render_dynamic_steam_card(
+                "https://example.com/avatar.gif", "player", "game", "playing"
+            )
+            settings.steam_card_watermark = True
+            await card.render_dynamic_steam_card(
+                "https://example.com/avatar.gif", "player", "game", "playing"
+            )
+
+        results = await self._run_with_stubs(modules, render_both)
+        self.assertIsNone(results)
+        self.assertEqual(len(cache_paths), 2)
+        self.assertNotEqual(cache_paths[0], cache_paths[1])
+        self.assertEqual([path.endswith(".gif") for path in cache_paths], [True, True])
 
 if __name__ == "__main__":
     unittest.main()

@@ -223,6 +223,7 @@ async def render_steam_card(
     from nonebot.log import logger
     from nonebot_plugin_htmlrender import template_to_pic
     from .cache import get_cached_image_url
+    from .config import config_steam
 
     try:
         avatar_url = await get_cached_image_url(avatar_url, grayscale=avatar_grayscale)
@@ -237,6 +238,8 @@ async def render_steam_card(
             return None
 
         card_class, viewport_width, viewport_height = get_steam_card_layout(game_name)
+        if config_steam.steam_card_watermark:
+            card_class = _append_card_class(card_class, "show-watermark")
         if background_url:
             card_class = _append_card_class(card_class, "game-bg")
             if background_grayscale:
@@ -435,6 +438,8 @@ async def render_dynamic_steam_card(
         template_html = template_file.read_text("utf8")
         template_digest = hashlib.sha256(template_html.encode("utf8")).hexdigest()
         card_class, viewport_width, viewport_height = get_steam_card_layout(game_name, dynamic=True)
+        if config_steam.steam_card_watermark:
+            card_class = _append_card_class(card_class, "show-watermark")
         if background_url:
             card_class = _append_card_class(card_class, "game-bg")
             if background_grayscale:

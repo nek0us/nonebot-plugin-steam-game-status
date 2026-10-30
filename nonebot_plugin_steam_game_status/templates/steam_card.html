@@ -119,18 +119,22 @@
             text-shadow: 0 1px 2px black;
         }
 
-        /* 背景装饰水印Steam效果 */
         .bg-watermark {
+            display: none;
             position: absolute;
             right: -16px;
             bottom: -24px;
             font-size: 118px;
             font-weight: bold;
-            color: rgba(255, 255, 255, 0.03); /* 调整的话改此透明度 */
+            color: rgba(255, 255, 255, 0.03);
             transform: rotate(-10deg);
             pointer-events: none;
             user-select: none;
             z-index: 1;
+        }
+
+        .steam-card.show-watermark .bg-watermark {
+            display: block;
         }
 
         .steam-card.compact {
@@ -183,7 +187,6 @@
 <body>
     <div class="steam-card {{ card_class }}" style="{{ background_style }}">
         <div class="bg-watermark">Steam</div>
-
         <div class="avatar-box">
             <img
                 src="{{ avatar_url }}"

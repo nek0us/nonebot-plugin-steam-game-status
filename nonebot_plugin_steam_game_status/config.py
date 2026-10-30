@@ -34,6 +34,7 @@ class Config(BaseModel):
     steam_owned_game_baseline_concurrency: int = 5
     steam_playtime_timeout_ms: int = 20000
     steam_link_timeout_seconds: Optional[int] = 15
+    steam_card_watermark: bool = False
     steam_dynamic_avatar_card: bool = False
     steam_dynamic_card_cache: bool = True
     steam_dynamic_card_preserve_avatar_gif_timing: bool = True
