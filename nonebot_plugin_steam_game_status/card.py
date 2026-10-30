@@ -5,9 +5,11 @@ import html
 import io
 import json
 import base64
+import asyncio
+import time
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 
 STEAM_CARD_ANIMATION_FRAME_COUNT = 12
@@ -22,6 +24,12 @@ STEAM_CARD_WIDE_VIEWPORT_WIDTH = 406
 STEAM_CARD_WIDE_VIEWPORT_HEIGHT = 88
 STEAM_CARD_LONG_GAME_NAME_LENGTH = 16
 STEAM_GAME_BACKGROUND_URL_TEMPLATE = "https://cdn.akamai.steamstatic.com/steam/apps/{appid}/library_hero.jpg"
+STEAM_STORE_ITEM_ASSETS_BASE_URL = "https://shared.fastly.steamstatic.com/store_item_assets/"
+_BACKGROUND_CACHE: dict[str, tuple[float, str]] = {}
+_BACKGROUND_LAST_VALID: dict[str, str] = {}
+_BACKGROUND_LOCKS: dict[str, asyncio.Lock] = {}
+_BACKGROUND_SUCCESS_TTL = 24 * 60 * 60
+_BACKGROUND_FAILURE_TTL = 5 * 60
 
 
 def get_steam_card_layout(game_name: str, *, dynamic: bool = False) -> tuple[str, int, int]:
@@ -40,6 +48,102 @@ def build_steam_game_background_url(appid: str) -> str:
     if not appid:
         return ""
     return STEAM_GAME_BACKGROUND_URL_TEMPLATE.format(appid=appid)
+
+
+def _parse_store_item_background(payload: dict, appid: str) -> str:
+    """Extract a library hero URL for the requested app from GetItems response."""
+    if not isinstance(payload, dict):
+        return ""
+    response = payload.get("response", {})
+    if not isinstance(response, dict):
+        return ""
+    items = response.get("store_items", [])
+    if not isinstance(items, list):
+        return ""
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_id = item.get("appid", item.get("id"))
+        if str(item_id) != appid or item.get("success") not in (1, True, "1"):
+            continue
+        assets = item.get("assets")
+        if not isinstance(assets, dict):
+            continue
+        filename = assets.get("library_hero") or assets.get("library_hero_2x")
+        url_format = assets.get("asset_url_format")
+        if (
+            not isinstance(filename, str)
+            or not filename
+            or not isinstance(url_format, str)
+            or not url_format
+            or "${FILENAME}" not in url_format
+        ):
+            continue
+        # Steam formats can contain either an explicit filename slot or a
+        # relative asset path. Prefix only relative paths; preserve query tokens.
+        url = url_format.replace("${FILENAME}", filename)
+        if not urlparse(url).scheme:
+            url = STEAM_STORE_ITEM_ASSETS_BASE_URL + url.lstrip("/")
+        return url
+    return ""
+
+
+async def _fetch_steam_game_background_url(appid: str) -> str:
+    from nonebot.internal.driver import Request
+    from .config import get_steam_api_domain
+    from .model import SafeResponse
+    from .utils import http_client
+
+    request_data = {
+        "ids": [{"appid": int(appid)}],
+        "context": {"language": "english", "country_code": "US"},
+        "data_request": {"include_assets": True},
+    }
+    url = f"https://{get_steam_api_domain()}/IStoreBrowseService/GetItems/v1/?{urlencode({'input_json': json.dumps(request_data, separators=(',', ':'))})}"
+    async with http_client() as client:
+        response = SafeResponse(await client.request(Request("GET", url, timeout=5)))
+    if response.status_code != 200:
+        return ""
+    content = response.content
+    if not isinstance(content, (str, bytes)):
+        return ""
+    try:
+        payload = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+        return ""
+    return _parse_store_item_background(payload, appid)
+
+
+async def resolve_steam_game_background_url(appid: str) -> str:
+    """Resolve the current Steam hero asset, falling back to the legacy URL."""
+    appid = str(appid).strip()
+    if not appid.isdecimal() or int(appid) <= 0:
+        return ""
+    appid = str(int(appid))
+    now = time.monotonic()
+    cached = _BACKGROUND_CACHE.get(appid)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    lock = _BACKGROUND_LOCKS.setdefault(appid, asyncio.Lock())
+    async with lock:
+        now = time.monotonic()
+        cached = _BACKGROUND_CACHE.get(appid)
+        if cached and cached[0] > now:
+            return cached[1]
+        try:
+            resolved = await _fetch_steam_game_background_url(appid)
+        except Exception:
+            resolved = ""
+        if resolved:
+            _BACKGROUND_LAST_VALID[appid] = resolved
+            result = resolved
+            ttl = _BACKGROUND_SUCCESS_TTL
+        else:
+            result = _BACKGROUND_LAST_VALID.get(appid) or build_steam_game_background_url(appid)
+            ttl = _BACKGROUND_FAILURE_TTL
+        _BACKGROUND_CACHE[appid] = (time.monotonic() + ttl, result)
+        return result
 
 
 def _append_card_class(card_class: str, extra_class: str) -> str:

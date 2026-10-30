@@ -20,7 +20,7 @@ from arclet.alconna import Alconna, Option, Args, CommandMeta, AllParam
 from .duration import format_playtime_duration
 from .utils import http_client, driver, HTTPClientSession, to_enum
 from .card import (
-    build_steam_game_background_url,
+    resolve_steam_game_background_url,
     render_bind_card,
     render_dynamic_steam_card,
     render_help_card,
@@ -439,7 +439,7 @@ async def get_status(client: HTTPClientSession, steam_id_to_groups: Dict[str, Li
                     use_background = group_data.get("stop_image_background", False) if action_type == "stop" else group_data.get("image_background", True)
                     avatar_grayscale = action_type == "stop" and group_data.get("stop_image_grayscale", False)
                     background_grayscale = action_type == "stop" and group_data.get("stop_image_background_grayscale", False)
-                    background_url = build_steam_game_background_url(display_game_id) if use_background and display_game_id else ""
+                    background_url = await resolve_steam_game_background_url(display_game_id) if use_background and display_game_id else ""
                     logger.trace(f"Steam 状态卡片渲染 steam_id:{steam_id} 群:{group_id} action:{action_type} appid:{display_game_id}")
                     card = await render_dynamic_steam_card(
                         avatar_url=avatar_url, player_name=nickname, game_name=display_game_name,
