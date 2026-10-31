@@ -30,6 +30,7 @@ class Config(BaseModel):
     # 设置为 2 或更高时，需要连续多次成功查询无游戏才播报停止。
     steam_stop_confirmations: int = 1
     steam_owned_game_interval: int = 60
+    steam_owned_game_include_demo: bool = False
     steam_owned_game_query_concurrency: int = 5
     steam_owned_game_baseline_concurrency: int = 5
     steam_playtime_timeout_ms: int = 20000

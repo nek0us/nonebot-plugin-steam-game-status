@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import Dict, List, Optional
 
 from nonebot.log import logger
@@ -6,6 +7,7 @@ from nonebot_plugin_alconna.uniseg import UniMessage
 
 from .api import (
     gameid_to_name,
+    get_game_info,
     get_group_target_bot,
     get_owned_games,
     save_data,
@@ -13,6 +15,36 @@ from .api import (
 )
 from .config import config_steam
 from .source import group_list, owned_games, steam_list
+
+
+_DEMO_TYPE_CACHE: Dict[str, tuple[float, Optional[bool]]] = {}
+_DEMO_TYPE_SUCCESS_TTL = 24 * 60 * 60
+_DEMO_TYPE_UNKNOWN_TTL = 5 * 60
+
+
+async def _is_demo_app(appid: str) -> bool:
+    """Return whether Steam explicitly identifies this app as a demo."""
+    now = time.monotonic()
+    cached = _DEMO_TYPE_CACHE.get(str(appid))
+    if cached and cached[0] > now:
+        return cached[1] is True
+
+    try:
+        info = await get_game_info(str(appid), timeout=5)
+    except Exception as error:
+        logger.debug(f"Steam demo 类型查询失败，appid:{appid}，按普通游戏处理：{error}")
+        info = None
+
+    data = info.get("data") if isinstance(info, dict) else None
+    app_type = data.get("type") if isinstance(data, dict) else None
+    if isinstance(info, dict) and info.get("success") is True and isinstance(app_type, str) and app_type.strip():
+        is_demo = app_type.strip().lower() == "demo"
+        _DEMO_TYPE_CACHE[str(appid)] = (time.monotonic() + _DEMO_TYPE_SUCCESS_TTL, is_demo)
+        return is_demo
+
+    logger.debug(f"Steam demo 类型未知，appid:{appid}，按普通游戏处理")
+    _DEMO_TYPE_CACHE[str(appid)] = (time.monotonic() + _DEMO_TYPE_UNKNOWN_TTL, None)
+    return False
 
 
 async def initialize_owned_games_baseline(steam_ids: List[str]) -> tuple[int, List[str]]:
@@ -101,9 +133,23 @@ async def run_owned_games_check() -> None:
             owned_games[steam_id] = merged_games
             continue
 
+        filtered_demo_appids = []
+        announced_appids = new_appids
+        if not config_steam.steam_owned_game_include_demo:
+            filtered_demo_appids = [appid for appid in new_appids if await _is_demo_app(appid)]
+            if filtered_demo_appids:
+                filtered_demo_set = set(filtered_demo_appids)
+                announced_appids = [appid for appid in new_appids if appid not in filtered_demo_set]
+            if not announced_appids:
+                owned_games[steam_id] = merged_games
+                logger.debug(
+                    f"Steam 游戏库新增内容均为 Demo，已更新基准但不发送消息，steam_id:{steam_id}，appid:{filtered_demo_appids}"
+                )
+                continue
+
         player_name = steam_list.get(steam_id, {}).get("nickname", steam_id)
         game_lines = []
-        for appid in new_appids:
+        for appid in announced_appids:
             game_name = await gameid_to_name(appid, current_games[appid])
             game_lines.append(f"《{game_name or current_games[appid]}》")
         message_text = f"{player_name} 的 Steam 游戏库新增了：\n" + "\n".join(game_lines)
@@ -113,7 +159,7 @@ async def run_owned_games_check() -> None:
             target, bot = await get_group_target_bot(group_id)
             if target:
                 try:
-                    logger.info(f"群 {group_id} 发送 Steam 游戏库入库播报: {player_name} -> {new_appids}")
+                    logger.info(f"群 {group_id} 发送 Steam 游戏库入库播报: {player_name} -> {announced_appids}")
                     await UniMessage(message_text).send(target=target, bot=bot)
                     sent = True
                 except Exception as e:
@@ -124,6 +170,11 @@ async def run_owned_games_check() -> None:
         if sent:
             owned_games[steam_id] = merged_games
         else:
+            if filtered_demo_appids:
+                owned_games[steam_id] = {
+                    **old_games,
+                    **{appid: current_games[appid] for appid in filtered_demo_appids},
+                }
             logger.warning(f"Steam 游戏库入库播报全部发送失败，保留旧基准等待下次重试，steam_id:{steam_id}")
 
     save_data()
