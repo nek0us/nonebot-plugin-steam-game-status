@@ -774,6 +774,8 @@ async def steam_del_handle(target: MsgTarget, matcher: Matcher, id: Match[str], 
         if removed:
             bump_delivery_group_generation(group_id)
             save_data()
+    if not removed:
+        await matcher.finish(f"本群尚未绑定该 Steam ID{config_steam.steam_tail_tone}")
     await matcher.finish(f"Steam ID：{steam_id}\nSteam Name：{steam_name}\n 删除成功了{config_steam.steam_tail_tone}")
 
 
@@ -1107,7 +1109,7 @@ async def remove_leaving_user_binding(group_id: str, user_id: str, adapter: str)
             logger.debug(f"Steam 群适配器不匹配，取消移除绑定 adapter: {adapter} user_id:{user_id} 群:{group_id} 适配器:{adapter}")
             return []
         
-        if group.get("remove_binding_on_leave", False):
+        if not group.get("auto_unbind_on_leave", True):
             logger.debug(f"Steam 群未启用离群解绑，取消移除绑定 adapter: {adapter}, user_id: {user_id}, 群: {group_id}")
             return []
         

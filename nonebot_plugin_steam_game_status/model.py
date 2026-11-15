@@ -47,7 +47,7 @@ def create_group_data(
         stop_image_grayscale: bool = False,
         stop_image_background_grayscale: bool = False,
         owned_game: bool = False,
-        auto_unbind_on_leave: bool = False,
+        auto_unbind_on_leave: bool = True,
         steam_bind_initiators: Optional[dict[str, str]] = None
         ) -> GroupDataNew:
     '''创建数据结构统一为函数调用'''
