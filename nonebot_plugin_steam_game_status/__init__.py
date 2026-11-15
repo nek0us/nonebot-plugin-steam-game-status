@@ -6,9 +6,11 @@ import asyncio
 
 from typing import Dict, List, Optional, Literal
 from nonebot import require
+from nonebot import on_notice
 from nonebot.permission import SUPERUSER
 from nonebot.log import logger
 from nonebot.matcher import Matcher
+from nonebot.adapters import Bot, Event
 from nonebot.plugin import PluginMetadata
 from nonebot.internal.driver import Request
 from nonebot.exception import MatcherException
@@ -17,6 +19,7 @@ from nonebot.plugin import inherit_supported_adapters
 
 from arclet.alconna import Alconna, Option, Args, CommandMeta, AllParam
 
+from .member_events import parse_member_leave
 from .duration import format_playtime_duration
 from .utils import http_client, driver, HTTPClientSession, to_enum
 from .card import (
@@ -650,7 +653,7 @@ async def ensure_group_data(target: MsgTarget) -> str:
 
 
 @steam_cmd.assign("add")
-async def steam_bind_handle(target: MsgTarget, matcher: Matcher, id: Match[str]):
+async def steam_bind_handle(target: MsgTarget, matcher: Matcher, id: Match[str], event: Event):
     steam_id = str(id.result)
     if len(steam_id) != 17:
         try:
@@ -663,37 +666,37 @@ async def steam_bind_handle(target: MsgTarget, matcher: Matcher, id: Match[str])
     global steam_list, group_list, exclude_game, reported_steam_state
     group_id = await ensure_group_data(target)
 
-    if steam_id in group_list[group_id]["user_list"]:
-        await matcher.finish(f"已经绑定过了{config_steam.steam_tail_tone}")
-
-    steam_name: str = ""
-    avatar_url: str = ""
-
-    try:
-        async with http_client() as client:
-            url = f"https://{get_steam_api_domain()}/ISteamUser/GetPlayerSummaries/v0002/?key=" + get_steam_key() + "&steamids=" + steam_id
-            res = SafeResponse(await client.request(Request("GET", url, timeout=30)))
-
-            if res.status_code != 200:
-                logger.debug(f"{steam_id} 绑定失败，{res.status_code} {res.text}")
-                await matcher.finish(f"{steam_id} 绑定失败，{res.status_code} {res.text}")
-
-            players = json.loads(res.text)["response"]["players"]
-            if players == []:
-                logger.debug(f"{steam_id} 绑定失败，查无此人，请检查输入的id")
-                await matcher.finish(f"{steam_id} 绑定失败，查无此人，请检查输入的id{config_steam.steam_tail_tone}")
-
-            steam_name = players[0]["personaname"]
-            avatar_url = normalize_steam_avatar_url(players[0].get("avatarfull", ""))
-
-    except MatcherException:
-        raise
-    except Exception as e:
-        logger.debug(f"{steam_id} 绑定失败，{e.args}")
-        await matcher.finish(f"{steam_id} 绑定失败{config_steam.steam_tail_tone}，{e}")
-
     # 新群绑定不应重置其他群正在使用的原始状态；本群已处理状态则必须清空。
     async with get_delivery_group_lock(group_id):
+        if steam_id in group_list[group_id]["user_list"]:
+            await matcher.finish(f"已经绑定过了{config_steam.steam_tail_tone}")
+
+        steam_name: str = ""
+        avatar_url: str = ""
+
+        try:
+            async with http_client() as client:
+                url = f"https://{get_steam_api_domain()}/ISteamUser/GetPlayerSummaries/v0002/?key=" + get_steam_key() + "&steamids=" + steam_id
+                res = SafeResponse(await client.request(Request("GET", url, timeout=30)))
+
+                if res.status_code != 200:
+                    logger.debug(f"{steam_id} 绑定失败，{res.status_code} {res.text}")
+                    await matcher.finish(f"{steam_id} 绑定失败，{res.status_code} {res.text}")
+
+                players = json.loads(res.text)["response"]["players"]
+                if players == []:
+                    logger.debug(f"{steam_id} 绑定失败，查无此人，请检查输入的id")
+                    await matcher.finish(f"{steam_id} 绑定失败，查无此人，请检查输入的id{config_steam.steam_tail_tone}")
+
+                steam_name = players[0]["personaname"]
+                avatar_url = normalize_steam_avatar_url(players[0].get("avatarfull", ""))
+
+        except MatcherException:
+            raise
+        except Exception as e:
+            logger.debug(f"{steam_id} 绑定失败，{e.args}")
+            await matcher.finish(f"{steam_id} 绑定失败{config_steam.steam_tail_tone}，{e}")
+
         if steam_id not in steam_list:
             steam_list[steam_id] = UserData(time=0, game_name="", nickname=steam_name, game_id="")
         else:
@@ -701,6 +704,7 @@ async def steam_bind_handle(target: MsgTarget, matcher: Matcher, id: Match[str])
         reported_steam_state.setdefault(group_id, {}).pop(steam_id, None)
         pending_stop_counts.get(group_id, {}).pop(steam_id, None)
         group_list[group_id]["user_list"].append(steam_id)
+        group_list[group_id]["steam_bind_initiators"][steam_id] = event.get_user_id()
         bump_delivery_group_generation(group_id)
     if group_list[group_id].get("owned_game", False):
         await initialize_owned_games_baseline([steam_id])
@@ -718,9 +722,32 @@ async def steam_bind_handle(target: MsgTarget, matcher: Matcher, id: Match[str])
         await matcher.finish(
             f"Steam ID：{steam_id}\nSteam ID64：{steam_id}\nSteam Name：{steam_name}\n 绑定成功了{config_steam.steam_tail_tone}")
 
+def remove_group_binding_locked(
+    group_id: str,
+    steam_id: str,
+) -> bool:
+    """在持锁状态下删除群绑定；返回是否成功删除。"""
+    global group_list, reported_steam_state, pending_stop_counts
+    if group_id not in group_list:
+        return False
+    if steam_id not in group_list[group_id]["user_list"]:
+        return False
+    try:
+        group_list[group_id]["user_list"].remove(steam_id)
+        group_list[group_id]["steam_bind_initiators"].pop(steam_id, None)
+    except Exception as e:
+        logger.debug(f"删除steam id 失败，输入值：{steam_id}，错误：{e.args}")
+        return False
+    group_reported = reported_steam_state.get(group_id)
+    if group_reported:
+        group_reported.pop(steam_id, None)
+        if not group_reported:
+            reported_steam_state.pop(group_id, None)
+    pending_stop_counts.get(group_id, {}).pop(steam_id, None)
+    return True
 
 @steam_cmd.assign("del")
-async def steam_del_handle(target: MsgTarget, matcher: Matcher, id: Match[str]):
+async def steam_del_handle(target: MsgTarget, matcher: Matcher, id: Match[str], event: Event):
     steam_id = str(id.result)
     if len(steam_id) != 17:
         try:
@@ -743,19 +770,10 @@ async def steam_del_handle(target: MsgTarget, matcher: Matcher, id: Match[str]):
     steam_name = steam_list[steam_id]["nickname"]
 
     async with get_delivery_group_lock(group_id):
-        try:
-            group_list[group_id]["user_list"].remove(steam_id)
-        except Exception as e:
-            logger.debug(f"删除steam id 失败，输入值：{steam_id}，错误：{e.args}")
-            await matcher.finish(f"没有找到 Steam ID：{steam_id}{config_steam.steam_tail_tone}")
-        group_reported = reported_steam_state.get(group_id)
-        if group_reported:
-            group_reported.pop(steam_id, None)
-            if not group_reported:
-                reported_steam_state.pop(group_id, None)
-        pending_stop_counts.get(group_id, {}).pop(steam_id, None)
-        bump_delivery_group_generation(group_id)
-    save_data()
+        removed = remove_group_binding_locked(group_id, steam_id)
+        if removed:
+            bump_delivery_group_generation(group_id)
+            save_data()
     await matcher.finish(f"Steam ID：{steam_id}\nSteam Name：{steam_name}\n 删除成功了{config_steam.steam_tail_tone}")
 
 
@@ -1076,3 +1094,51 @@ async def sbeam_subscribe():
     logger.info("steam定时尝试获取推送打折")
     await get_discounted_games_info()
     logger.info("steam定时尝试获取推送打折结束")
+
+async def remove_leaving_user_binding(group_id: str, user_id: str, adapter: str) -> list[str]:
+    async with get_delivery_group_lock(group_id):
+        global group_list
+        group = group_list.get(group_id)
+        if not group:
+            logger.debug(f"Steam 群不存在，取消移除绑定 adapter: {adapter} user_id:{user_id} 群:{group_id}")
+            return []
+        
+        if group.get("adapter", "").casefold() != adapter.casefold():
+            logger.debug(f"Steam 群适配器不匹配，取消移除绑定 adapter: {adapter} user_id:{user_id} 群:{group_id} 适配器:{adapter}")
+            return []
+        
+        if group.get("remove_binding_on_leave", False):
+            logger.debug(f"Steam 群未启用离群解绑，取消移除绑定 adapter: {adapter}, user_id: {user_id}, 群: {group_id}")
+            return []
+        
+        steam_ids = [
+            steam_id 
+            for steam_id, initiator_id in group.get("steam_bind_initiators", {}).items()
+            if initiator_id == user_id
+        ]
+        
+        removed = []
+        
+        for steam_id in steam_ids:
+            if remove_group_binding_locked(group_id, steam_id):
+                removed.append(steam_id)
+                logger.info(f"Steam 用户离群，已移除绑定 steam_id:{steam_id} 群:{group_id} user_id:{user_id}")
+        
+        if removed:
+            bump_delivery_group_generation(group_id)
+            save_data()
+            
+        return removed
+
+steam_leave = on_notice(priority=config_steam.steam_notice_priority, block=False)
+
+@steam_leave.handle()
+async def steam_leave_handle(bot: Bot, event: Event):
+    leave = parse_member_leave(bot, event)
+    
+    if not leave:
+        return
+    
+    removed = await remove_leaving_user_binding(leave.group_id, leave.user_id, leave.adapter)
+    if removed:
+        logger.info(f"Steam 用户离群，已移除绑定 steam_ids:{removed} 群:{leave.group_id} user_id:{leave.user_id}")

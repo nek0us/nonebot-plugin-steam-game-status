@@ -14,6 +14,7 @@ class Config(BaseModel):
     steam_web_key: Union[str, List[str]] = []
     steam_isthereanydeal_key: Union[str, List[str]] = []
     steam_command_priority: int = 5
+    steam_notice_priority: int = 5
     steam_interval: int = 1
     steam_proxy: Optional[str] = None
     steam_api_proxy: Optional[str] = None
@@ -75,6 +76,12 @@ class Config(BaseModel):
         if v >= 1:
             return v
         raise ValueError("命令优先级必须为大于0的整数")
+
+    @validator("steam_notice_priority")
+    def check_notice_priority(cls,v: int) -> int:
+        if v >= 1:
+            return v
+        raise ValueError("通知优先级必须为大于0的整数")
     
     @validator("steam_interval")
     def check_steam_interval(cls,v: int) -> int:

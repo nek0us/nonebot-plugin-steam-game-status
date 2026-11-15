@@ -32,6 +32,8 @@ class GroupDataNew(GroupData3):
     stop_image_grayscale: bool
     stop_image_background_grayscale: bool
     owned_game: bool
+    auto_unbind_on_leave: bool
+    steam_bind_initiators: dict[str, str]
 
 def create_group_data(
         status: bool = True,
@@ -45,6 +47,8 @@ def create_group_data(
         stop_image_grayscale: bool = False,
         stop_image_background_grayscale: bool = False,
         owned_game: bool = False,
+        auto_unbind_on_leave: bool = False,
+        steam_bind_initiators: Optional[dict[str, str]] = None
         ) -> GroupDataNew:
     '''创建数据结构统一为函数调用'''
     return GroupDataNew(
@@ -59,6 +63,8 @@ def create_group_data(
         stop_image_grayscale=stop_image_grayscale,
         stop_image_background_grayscale=stop_image_background_grayscale,
         owned_game=owned_game,
+        auto_unbind_on_leave=auto_unbind_on_leave,
+        steam_bind_initiators=dict(steam_bind_initiators) if steam_bind_initiators is not None else {}
     )
 
 class UserData(TypedDict):

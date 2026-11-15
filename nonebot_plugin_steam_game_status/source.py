@@ -386,6 +386,20 @@ if value_game_id_26_07_08 and any("game_id" not in user_data for user_data in st
     atomic_write_json(new_file_steam, steam_list_game_id_26_07_08)
     logger.success("steam 0.4.0 26.07.08 用户当前游戏 appid 数据更新成功")
 
+# 26.11.15 GroupDataNew 新增 auto_unbind_on_leave 和 steam_bind_initiators 字段适配
+steam_group_auto_unbind_26_11_15: Dict[str, GroupDataNew] = load_json_or_recover(new_file_group, {})  # type: ignore[assignment]
+value_auto_unbind_26_11_15 = next(iter(steam_group_auto_unbind_26_11_15.values()), None)
+if value_auto_unbind_26_11_15 and any(
+    "auto_unbind_on_leave" not in group_data 
+    or "steam_bind_initiators" not in group_data
+    for group_data in steam_group_auto_unbind_26_11_15.values()
+):
+    for group_data in steam_group_auto_unbind_26_11_15.values():
+        group_data.setdefault("auto_unbind_on_leave", True)
+        group_data.setdefault("steam_bind_initiators", {})
+    atomic_write_json(new_file_group, steam_group_auto_unbind_26_11_15)
+    logger.success("steam 0.4.0 26.11.15 群组自动解绑和Steam绑定发起者数据更新成功")
+
 group_list: Dict[str, GroupDataNew] = load_json_or_recover(new_file_group, {})  # type: ignore[assignment]
 steam_list: Dict[str, UserData] = load_json_or_recover(new_file_steam, {})  # type: ignore[assignment]
 gameid2name: Dict[str, str] = load_json_or_recover(game_cache_file, {})  # type: ignore[assignment]
