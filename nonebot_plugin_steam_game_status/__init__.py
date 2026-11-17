@@ -19,6 +19,7 @@ from nonebot.plugin import inherit_supported_adapters
 
 from arclet.alconna import Alconna, Option, Args, CommandMeta, AllParam
 
+require("nonebot_plugin_alconna")
 from .member_events import parse_member_leave
 from .duration import format_playtime_duration
 from .utils import http_client, driver, HTTPClientSession, to_enum
@@ -82,7 +83,6 @@ from .source import (
 )
 from .cache import cleanup_expired_cache_files
 
-require("nonebot_plugin_alconna")
 from nonebot_plugin_alconna import Arparma, on_alconna, Match  # noqa: E402
 from nonebot_plugin_alconna.uniseg import UniMessage, CustomNode, Reference, MsgTarget  # noqa: E402
 
