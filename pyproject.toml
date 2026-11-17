@@ -6,7 +6,7 @@ authors = [
     {name = "nek0us", email = "nekouss@mail.com"},
 ]
 license = {text = "GPL3"}
-dependencies = ["nonebot2>=2.0.0", "nonebot-plugin-alconna>=0.57.0", "nonebot-plugin-apscheduler>=0.2.0","nonebot_plugin_htmlrender>=0.3.1","nonebot_plugin_localstore>=0.7.1","nonebot-adapter-onebot>=2.4.2","beautifulsoup4>=4.13.5","Pillow>=10.0.0"]
+dependencies = ["nonebot2>=2.0.0", "nonebot-plugin-alconna>=0.57.0", "nonebot-plugin-apscheduler>=0.2.0","nonebot_plugin_htmlrender>=0.3.1","nonebot_plugin_localstore>=0.7.1","beautifulsoup4>=4.13.5","Pillow>=10.0.0"]
 requires-python = ">=3.10"
 readme = "README.md"
 
