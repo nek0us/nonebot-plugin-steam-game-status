@@ -172,6 +172,8 @@ __plugin_meta__ = PluginMetadata(
                 默认开始/切换游戏使用图片播报，结束游戏使用文字播报。
             steam入库播报开启/steam入库播报关闭
                 默认关闭。按 steam_owned_game_interval 检查公开游戏库，只播报新增游戏。
+            steam退群解绑开启/steam退群解绑关闭
+                默认开启。绑定着退群时自动解绑关联Steam ID。
             steam喜加一
             steam喜加一订阅
             steam喜加一退订
@@ -606,6 +608,7 @@ steam_command_alc = Alconna(
     Option("结束头像黑白", Args["status", str], alias=["结束图片黑白"], separators="", compact=True),
     Option("结束背景黑白", Args["status", str], alias=["结束图片背景黑白"], separators="", compact=True),
     Option("入库播报", Args["status", str], alias=["游戏库播报"], separators="", compact=True),
+    Option("退群解绑", Args["status", str], separators="", compact=True),
     Option("墙", Args["user", str], separators="", compact=True),
     Option("喜加一", Args["action", Optional[Literal["订阅", "退订"]]], separators="", compact=True),
     Option("帮助", alias=["help", "菜单", ".help"], separators="", compact=True),
@@ -952,6 +955,16 @@ async def steam_owned_game_handle(target: MsgTarget, status: Match[str]):
                 baseline_text += " 等"
         await UniMessage(f"Steam 入库播报已{str(status.result)}{baseline_text if owned_game_enabled else ''}{config_steam.steam_tail_tone}").send(reply_to=True)
 
+@steam_cmd.assign("退群解绑")
+async def steam_leave_group_handle(target: MsgTarget, status: Match[str]):
+    if str(status.result) not in ("开启", "关闭"):
+        await UniMessage(f"仅允许设置退群解绑开启或关闭{config_steam.steam_tail_tone}").send(reply_to=True)
+    else:
+        global group_list
+        group_id = await ensure_group_data(target)
+        group_list[group_id]["auto_unbind_on_leave"] = True if str(status.result) == "开启" else False
+        save_data()
+        await UniMessage(f"Steam 退群解绑已{str(status.result)}{config_steam.steam_tail_tone}").send(reply_to=True)
 
 @steam_cmd.assign("喜加一")
 async def steam_free_handle(target: MsgTarget, matcher: Matcher, action: Match[str]):
