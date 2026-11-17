@@ -220,3 +220,54 @@ async def is_in_group(bot: Bot, group_id: str) -> bool:
         for group in groups
         if isinstance(group, dict)
     )
+
+async def get_group_member_ids(bot: Bot, group_id: str) -> set[str] | None:
+    if bot.adapter.get_name() == "OneBot V11":
+        try:
+            group_list = await bot.call_api("get_group_list")
+            group = next((group for group in group_list if str(group.get("group_id")) == str(group_id)), None)
+            if not group:
+                log("TRACE", f"Steam插件巡检获取群成员列表失败: 未找到群信息: bot {bot.self_id} 群 {group_id} Adapter {bot.adapter.get_name()}")
+                return None
+            
+            member_count = group["member_count"]
+        
+            members = await bot.call_api("get_group_member_list", group_id=int(group_id))
+            if not isinstance(members, list) or not members:
+                log("WARNING", f"Steam插件巡检获取群成员列表失败: 返回值不是列表或为空: bot {bot.self_id} 群 {group_id}")
+                return None
+            if len(members) != member_count:
+                log("WARNING", f"Steam插件巡检获取群成员列表失败: 返回值长度与群成员数不符: bot {bot.self_id} 群 {group_id} 返回值长度 {len(members)} 群成员数 {member_count}")
+                return None
+            
+        except Exception as e:
+            log("WARNING", f"Steam插件巡检获取群成员列表失败: {e}")
+            return None
+        
+        if any(not isinstance(member, dict) or member.get("user_id") is None for member in members):
+            log("WARNING", f"Steam插件巡检获取群成员列表失败: 返回值中包含非字典元素或缺少user_id: bot {bot.self_id} 群 {group_id}")
+            return None
+        
+        member_ids = {str(member["user_id"]) for member in members}
+        if str(bot.self_id) not in member_ids:
+            log("WARNING", f"Steam插件巡检获取群成员列表失败: bot {bot.self_id} 不在群 {group_id} 成员列表中")
+            return None
+        
+        return member_ids
+        
+    return None
+
+async def get_group_member_ids_by_bots(group_id: str, adapter: str) -> set[str] | None:
+    bots = get_really_bots()
+    members_ids = set()
+    for bot in bots:
+        if bot.adapter.get_name().casefold() != adapter.casefold():
+            continue
+        member_ids = await get_group_member_ids(bot, group_id)
+        if member_ids is not None:
+            members_ids.update(member_ids)
+    if not members_ids:
+        log("WARNING", f"Steam插件巡检获取群成员列表失败: 所有bot都无法获取群成员列表，群号: {group_id}")
+        return None
+    
+    return members_ids

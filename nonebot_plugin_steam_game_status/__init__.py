@@ -30,7 +30,7 @@ from .card import (
     render_steam_card,
 )
 from .avatar import normalize_steam_avatar_url, resolve_avatar_url
-from .model import UserData, SafeResponse, create_group_data
+from .model import UserData, SafeResponse, create_group_data, get_group_member_ids_by_bots
 from .status_state import (
     HandledStatePersistenceError,
     build_steam_id_to_groups,
@@ -93,6 +93,7 @@ require("nonebot_plugin_htmlrender")
 
 # 仅用于“无游戏”连续确认；重启后清空会更保守地延迟一次停止播报。
 pending_stop_counts: Dict[str, Dict[str, int]] = {}
+missing_confirmations: dict[tuple[str, str], tuple[int, int]] = {}
 
 
 def _delivery_is_current(
@@ -538,6 +539,30 @@ async def get_status(client: HTTPClientSession, steam_id_to_groups: Dict[str, Li
             f"steam id:{steam_id} 查询状态失败,line: {exc_traceback.tb_lineno if exc_traceback else ''}，{e.args} \n{res.text if res else None}\n{a}\n{b}")
 
 
+def remove_group_binding_locked(
+    group_id: str,
+    steam_id: str,
+) -> bool:
+    """在持锁状态下删除群绑定；返回是否成功删除。"""
+    global group_list, reported_steam_state, pending_stop_counts
+    if group_id not in group_list:
+        return False
+    if steam_id not in group_list[group_id]["user_list"]:
+        return False
+    try:
+        group_list[group_id]["user_list"].remove(steam_id)
+        group_list[group_id]["steam_bind_initiators"].pop(steam_id, None)
+    except Exception as e:
+        logger.debug(f"删除steam id 失败，输入值：{steam_id}，错误：{e.args}")
+        return False
+    group_reported = reported_steam_state.get(group_id)
+    if group_reported:
+        group_reported.pop(steam_id, None)
+        if not group_reported:
+            reported_steam_state.pop(group_id, None)
+    pending_stop_counts.get(group_id, {}).pop(steam_id, None)
+    return True
+
 @scheduler.scheduled_job("interval", minutes=config_steam.steam_interval, id="steam",
                          misfire_grace_time=(config_steam.steam_interval * 60 - 1))
 async def now_steam():
@@ -587,6 +612,94 @@ async def now_steam():
 async def now_steam_owned_games():
     await run_owned_games_check()
 
+@scheduler.scheduled_job(
+    "interval",
+    minutes=config_steam.steam_auto_unbind_on_leave_interval,
+    id="steam_unbind_not_in_group",
+    misfire_grace_time=(config_steam.steam_auto_unbind_on_leave_interval * 60 - 1),
+)
+async def now_steam_unbind_not_in_group():
+    global group_list, missing_confirmations
+    for group_id, _ in list(group_list.items()):
+        async with get_delivery_group_lock(group_id):
+            group = group_list.get(group_id)
+            if not group:
+                continue
+            if not group.get("auto_unbind_on_leave"):
+                continue
+            
+            initiators_snapshot = dict(group.get("steam_bind_initiators", {}))
+            adapter = str(group.get("adapter"))
+            if not initiators_snapshot:
+                continue
+            generation_snapshot = get_delivery_group_generation(group_id)
+        
+        members_ids = await get_group_member_ids_by_bots(group_id, adapter)
+        
+        if members_ids is None:
+            logger.warning(f"Steam 群成员获取失败 群:{group_id}")
+            continue
+        
+        expected_user = set(initiators_snapshot.values())
+        async with get_delivery_group_lock(group_id):
+            group = group_list.get(group_id)
+            if not group:
+                continue
+            if not group.get("auto_unbind_on_leave"):
+                continue
+            if group.get("adapter").casefold() != adapter.casefold():
+                continue
+            if get_delivery_group_generation(group_id) != generation_snapshot:
+                logger.debug(f"Steam 群:{group_id} 巡检期间绑定版本变化，放弃本轮")
+                # 旧缺席记录不再可信
+                for user_id in expected_user:
+                    missing_confirmations.pop((group_id, user_id), None)
+                continue
+            if group.get("steam_bind_initiators", {}) != initiators_snapshot:
+                logger.debug(f"Steam 群:{group_id} 巡检期间绑定列表变化，放弃本轮")
+                # 旧缺席记录不再可信
+                for user_id in expected_user:
+                    missing_confirmations.pop((group_id, user_id), None)
+                continue
+            # 统计连续缺席
+            confirmed_users = []
+            for user_id in expected_user:
+                key = (group_id, user_id)
+                
+                # 用户仍然在群里，清除此前的缺席记录
+                if user_id in members_ids:
+                    missing_confirmations.pop(key, None)
+                    continue
+                
+                # 用户不在成员快照中
+                pervious = missing_confirmations.get(key)
+                
+                if pervious and pervious[0] == generation_snapshot:
+                    count = pervious[1] + 1
+                else:
+                    count = 1
+                    
+                missing_confirmations[key] = (generation_snapshot, count)
+                
+                logger.info(f"Steam 群:{group_id} 用户:{user_id} 不在群成员快照中，缺席计数: {count}")
+                
+                if count >= 2:
+                    logger.info(f"Steam 群:{group_id} 用户:{user_id} 缺席计数达到阈值，准备执行解绑")
+                    confirmed_users.append(user_id)
+            removed_steam_ids = []
+            for user_id in confirmed_users:
+                steam_ids = [steam_id for steam_id, initiator_id in initiators_snapshot.items() if initiator_id == user_id]
+                for steam_id in steam_ids:
+                    if remove_group_binding_locked(group_id, steam_id):
+                        removed_steam_ids.append(steam_id)
+                missing_confirmations.pop((group_id, user_id), None)
+            
+            if removed_steam_ids:
+                bump_delivery_group_generation(group_id)
+                save_data()
+                logger.info(f"Steam 群:{group_id} 缺席用户解绑完成，解绑的 Steam ID: {removed_steam_ids}")
+            else:
+                logger.debug(f"Steam 群:{group_id} 本轮巡检没有需要解绑的缺席用户")
 
 steam_command_alc = Alconna(
     "steam",
@@ -731,29 +844,6 @@ async def steam_bind_handle(target: MsgTarget, matcher: Matcher, id: Match[str],
         await matcher.finish(
             f"Steam ID：{steam_id}\nSteam ID64：{steam_id}\nSteam Name：{steam_name}\n 绑定成功了{config_steam.steam_tail_tone}")
 
-def remove_group_binding_locked(
-    group_id: str,
-    steam_id: str,
-) -> bool:
-    """在持锁状态下删除群绑定；返回是否成功删除。"""
-    global group_list, reported_steam_state, pending_stop_counts
-    if group_id not in group_list:
-        return False
-    if steam_id not in group_list[group_id]["user_list"]:
-        return False
-    try:
-        group_list[group_id]["user_list"].remove(steam_id)
-        group_list[group_id]["steam_bind_initiators"].pop(steam_id, None)
-    except Exception as e:
-        logger.debug(f"删除steam id 失败，输入值：{steam_id}，错误：{e.args}")
-        return False
-    group_reported = reported_steam_state.get(group_id)
-    if group_reported:
-        group_reported.pop(steam_id, None)
-        if not group_reported:
-            reported_steam_state.pop(group_id, None)
-    pending_stop_counts.get(group_id, {}).pop(steam_id, None)
-    return True
 
 @steam_cmd.assign("del")
 async def steam_del_handle(target: MsgTarget, matcher: Matcher, id: Match[str], event: Event):
@@ -966,10 +1056,14 @@ async def steam_leave_group_handle(target: MsgTarget, status: Match[str]):
     if str(status.result) not in ("开启", "关闭"):
         await UniMessage(f"仅允许设置退群解绑开启或关闭{config_steam.steam_tail_tone}").send(reply_to=True)
     else:
-        global group_list
+        global group_list, missing_confirmations
         group_id = await ensure_group_data(target)
         async with get_delivery_group_lock(group_id):
             group_list[group_id]["auto_unbind_on_leave"] = True if str(status.result) == "开启" else False
+            if status.result == "关闭":
+                for key in list(missing_confirmations):
+                    if key[0] == group_id:
+                        missing_confirmations.pop(key, None)
             save_data()
         await UniMessage(f"Steam 退群解绑已{str(status.result)}{config_steam.steam_tail_tone}").send(reply_to=True)
 
@@ -1144,7 +1238,7 @@ async def remove_leaving_user_binding(group_id: str, user_id: str, adapter: str)
         for steam_id in steam_ids:
             if remove_group_binding_locked(group_id, steam_id):
                 removed.append(steam_id)
-                logger.info(f"Steam 用户离群，已移除绑定 steam_id:{steam_id} 群:{group_id} user_id:{user_id}")
+                logger.info(f"Steam 用户离群，已移除绑定 steam_id:{steam_id} 群:{group_id} user_id:{user_id} Adapter:{adapter}")
         
         if removed:
             bump_delivery_group_generation(group_id)

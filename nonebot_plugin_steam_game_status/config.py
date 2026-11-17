@@ -48,6 +48,7 @@ class Config(BaseModel):
     steam_dynamic_card_timeout_ms: int = 15000
     steam_dynamic_avatar_cache_ttl_minutes: int = 60
     steam_image_cache_retention_days: int = 30
+    steam_auto_unbind_on_leave_interval: int = 60
     
     @validator("steam_isthereanydeal_key")
     def check_isthereanydeal_key(cls,v: Union[str, List[str]]) -> Union[str, List[str]]:
@@ -285,6 +286,12 @@ class Config(BaseModel):
         if v >= 0:
             return v
         raise ValueError("steam_image_cache_retention_days 必须为大于等于0的整数")
+    
+    @validator("steam_auto_unbind_on_leave_interval")
+    def check_steam_auto_unbind_on_leave_interval(cls, v: int) -> int:
+        if v >= 1:
+            return v
+        raise ValueError("steam自动巡检解绑离群用户间隔必须为大于0的整数")
     
 config_steam = get_plugin_config(Config)
 bot_name = list(get_driver().config.nickname)
