@@ -16,11 +16,14 @@ def parse_member_leave(bot: Bot, event: Event) -> MemberLeave | None:
             "notice.group_decrease.kick",
         ):
             return None
-        group_id = str(getattr(event, "group_id", None))
-        user_id = str(getattr(event, "user_id", None))
+        group_id = getattr(event, "group_id", None)
+        user_id = getattr(event, "user_id", None)
         
         if group_id is None or user_id is None:
             return None
+        
+        group_id = str(group_id)
+        user_id = str(user_id)
         
         if user_id == str(bot.self_id):
             return None

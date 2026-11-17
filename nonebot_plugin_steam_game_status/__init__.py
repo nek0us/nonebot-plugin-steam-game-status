@@ -669,37 +669,41 @@ async def steam_bind_handle(target: MsgTarget, matcher: Matcher, id: Match[str],
     global steam_list, group_list, exclude_game, reported_steam_state
     group_id = await ensure_group_data(target)
 
+    if steam_id in group_list[group_id]["user_list"]:
+        await matcher.finish(f"已经绑定过了{config_steam.steam_tail_tone}")
+
+    steam_name: str = ""
+    avatar_url: str = ""
+
+    try:
+        async with http_client() as client:
+            url = f"https://{get_steam_api_domain()}/ISteamUser/GetPlayerSummaries/v0002/?key=" + get_steam_key() + "&steamids=" + steam_id
+            res = SafeResponse(await client.request(Request("GET", url, timeout=30)))
+
+            if res.status_code != 200:
+                logger.debug(f"{steam_id} 绑定失败，{res.status_code} {res.text}")
+                await matcher.finish(f"{steam_id} 绑定失败，{res.status_code} {res.text}")
+
+            players = json.loads(res.text)["response"]["players"]
+            if players == []:
+                logger.debug(f"{steam_id} 绑定失败，查无此人，请检查输入的id")
+                await matcher.finish(f"{steam_id} 绑定失败，查无此人，请检查输入的id{config_steam.steam_tail_tone}")
+
+            steam_name = players[0]["personaname"]
+            avatar_url = normalize_steam_avatar_url(players[0].get("avatarfull", ""))
+
+    except MatcherException:
+        raise
+    except Exception as e:
+        logger.debug(f"{steam_id} 绑定失败，{e.args}")
+        await matcher.finish(f"{steam_id} 绑定失败{config_steam.steam_tail_tone}，{e}")
+        
     # 新群绑定不应重置其他群正在使用的原始状态；本群已处理状态则必须清空。
     async with get_delivery_group_lock(group_id):
+        
         if steam_id in group_list[group_id]["user_list"]:
             await matcher.finish(f"已经绑定过了{config_steam.steam_tail_tone}")
-
-        steam_name: str = ""
-        avatar_url: str = ""
-
-        try:
-            async with http_client() as client:
-                url = f"https://{get_steam_api_domain()}/ISteamUser/GetPlayerSummaries/v0002/?key=" + get_steam_key() + "&steamids=" + steam_id
-                res = SafeResponse(await client.request(Request("GET", url, timeout=30)))
-
-                if res.status_code != 200:
-                    logger.debug(f"{steam_id} 绑定失败，{res.status_code} {res.text}")
-                    await matcher.finish(f"{steam_id} 绑定失败，{res.status_code} {res.text}")
-
-                players = json.loads(res.text)["response"]["players"]
-                if players == []:
-                    logger.debug(f"{steam_id} 绑定失败，查无此人，请检查输入的id")
-                    await matcher.finish(f"{steam_id} 绑定失败，查无此人，请检查输入的id{config_steam.steam_tail_tone}")
-
-                steam_name = players[0]["personaname"]
-                avatar_url = normalize_steam_avatar_url(players[0].get("avatarfull", ""))
-
-        except MatcherException:
-            raise
-        except Exception as e:
-            logger.debug(f"{steam_id} 绑定失败，{e.args}")
-            await matcher.finish(f"{steam_id} 绑定失败{config_steam.steam_tail_tone}，{e}")
-
+        
         if steam_id not in steam_list:
             steam_list[steam_id] = UserData(time=0, game_name="", nickname=steam_name, game_id="")
         else:
@@ -709,9 +713,11 @@ async def steam_bind_handle(target: MsgTarget, matcher: Matcher, id: Match[str],
         group_list[group_id]["user_list"].append(steam_id)
         group_list[group_id]["steam_bind_initiators"][steam_id] = event.get_user_id()
         bump_delivery_group_generation(group_id)
+        save_data()
     if group_list[group_id].get("owned_game", False):
         await initialize_owned_games_baseline([steam_id])
-    save_data()
+        save_data()
+    
 
     # 渲染发送绑定成功
     bind_img = None
@@ -962,8 +968,9 @@ async def steam_leave_group_handle(target: MsgTarget, status: Match[str]):
     else:
         global group_list
         group_id = await ensure_group_data(target)
-        group_list[group_id]["auto_unbind_on_leave"] = True if str(status.result) == "开启" else False
-        save_data()
+        async with get_delivery_group_lock(group_id):
+            group_list[group_id]["auto_unbind_on_leave"] = True if str(status.result) == "开启" else False
+            save_data()
         await UniMessage(f"Steam 退群解绑已{str(status.result)}{config_steam.steam_tail_tone}").send(reply_to=True)
 
 @steam_cmd.assign("喜加一")
