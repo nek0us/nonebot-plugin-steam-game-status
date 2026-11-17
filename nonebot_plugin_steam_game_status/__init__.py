@@ -928,7 +928,7 @@ async def steam_bind_list_handle(target: MsgTarget):
                 uid=str(target.self_id),
                 name=str(index + 1),
                 content=UniMessage.text(
-                    f"Steam ID：{steam_id}\n昵称：{steam_list[steam_id]['nickname']}\n{'正在玩：' + steam_list[steam_id]['game_name'] if steam_list[steam_id]['game_name'] != '' else ''}")
+                    f"Steam ID：{steam_id}\n绑定者: {group_list[group_id]['steam_bind_initiators'].get(steam_id, '未知')}\n昵称：{steam_list[steam_id]['nickname']}\n{'正在玩：' + steam_list[steam_id]['game_name'] if steam_list[steam_id]['game_name'] != '' else ''}")
             )
             for index, steam_id in enumerate(group_list[group_id]["user_list"])
         ]
