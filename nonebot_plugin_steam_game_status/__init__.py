@@ -1092,7 +1092,9 @@ async def steam_help_handle(matcher: Matcher):
         "屏蔽：steam屏蔽 游戏名、steam恢复 游戏名、steam排除列表\n"
         "入库：steam入库播报 开启/关闭\n"
         "订阅：steam喜加一、steam喜加一 订阅/退订、steam打折订阅 appid\n"
-        "工具：steam墙 7656..."
+        "工具：steam墙 7656...\n"
+        "高级：steam图片背景 开启/关闭、steam结束图片背景 开启/关闭、steam结束头像黑白 开启/关闭、steam结束背景黑白 开启/关闭\n"
+        "退群解绑：steam退群解绑 开启/关闭\n"
     )
 
 

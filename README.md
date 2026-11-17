@@ -99,6 +99,7 @@ _✨ 在群内播报 Steam 游戏状态的 Nonebot 插件 ✨_
 | steam_api_proxy | 否 | None | str | Steam API 反代域名 |
 | steam_store_proxy | 否 | None | str | Steam Store 反代域名 |
 | steam_subscribe_time | 否 | ["08:00"] | str/List[str] | 喜加一和折扣订阅检索推送时间 |
+| steam_auto_unbind_on_leave_interval | 否 | 60 | int | 自动巡检退群解绑间隔，单位分钟 |
 
 ### Steam 查询与 API 并发
 
@@ -321,6 +322,7 @@ pip install nonebot2[httpx]
 | steam结束头像黑白开启/steam结束头像黑白关闭 | 否 | 群聊 | 群员 |       设置结束游戏图片播报是否将用户头像显示为黑白，默认关闭        |
 | steam结束背景黑白开启/steam结束背景黑白关闭 | 否 | 群聊 | 群员 |       仅在结束图片背景开启后生效，设置结束游戏卡片背景图是否显示为黑白，默认关闭        |
 | steam入库播报开启/steam入库播报关闭 | 否 | 群聊 | 群员 |       设置是否定时检查公开游戏库新增游戏，开启时会先建立基准，默认关闭        |
+| steam退群解绑开启/steam退群解绑关闭 | 否 | 群聊 | 群员 |       设置是否检测绑定者是否已离开群聊并自动解绑，默认开启        |
 | steam喜加一 | 否 | 群聊 | 群员 |       主动获取喜加一资讯        |    
 | steam喜加一订阅 | 否 | 群聊 | 群员 |       开启本群喜加一推送        |    
 | steam喜加一退订 | 否 | 群聊 | 群员 |       关闭本群喜加一推送        |  
@@ -352,6 +354,11 @@ pip install nonebot2[httpx]
 
 
 ## 更新记录
+2026.11.18 0.4.4
+1. 添加离群自动解绑功能
+2. 修复部分导入错误和依赖问题
+
+
 2026.07.08 0.4.0
 1. 新增 Steam 状态图片卡片播报，支持按群开启/关闭图片播报；默认开始/切换游戏使用图片播报，保留原文字播报作为降级与可选方案。感谢 [PR #33](https://github.com/nek0us/nonebot-plugin-steam-game-status/pull/33) 对图片播报方案的贡献
 2. 新增结束游戏图片播报开关，默认关闭，并可开启头像黑白
